@@ -19,6 +19,7 @@ DATABASE_URI = os.getenv(
 )
 
 BASE_URL = "/accounts"
+HTTPS_ENVIRON = {"wsgi.url_scheme": "https"}
 
 
 ######################################################################
@@ -79,6 +80,27 @@ class TestAccountService(TestCase):
         """It should get 200_OK from the Home Page"""
         response = self.client.get("/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_security_headers(self):
+        """It should return the required security policy on HTTPS responses"""
+        response = self.client.get("/", environ_overrides=HTTPS_ENVIRON)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        headers = {
+            "X-Frame-Options": "SAMEORIGIN",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; object-src 'none'",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+        }
+        for name, value in headers.items():
+            self.assertEqual(response.headers.get(name), value)
+        self.assertIn("max-age=", response.headers.get("Strict-Transport-Security", ""))
+
+    def test_cors_security(self):
+        """It should advertise the public demo API without credential sharing"""
+        response = self.client.get("/", environ_overrides=HTTPS_ENVIRON)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
+        self.assertNotIn("Access-Control-Allow-Credentials", response.headers)
 
     def test_health(self):
         """It should be healthy"""
