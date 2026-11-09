@@ -46,3 +46,24 @@ jobs:
           flake8 service tests --count --max-complexity=10 --max-line-length=127 --statistics
       - name: Unit tests and coverage
         run: nosetests --cover-min-percentage=95
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build container
+        run: docker build -t accounts:ci .
+      - name: Smoke test the non-root image
+        run: |
+          docker run -d --name accounts-ci -p 127.0.0.1:8080:8080 \
+            -e DATABASE_URI=sqlite:////tmp/accounts-ci.sqlite accounts:ci
+          curl --fail --retry 20 --retry-connrefused --retry-delay 1 \
+            -H 'X-Forwarded-Proto: https' http://127.0.0.1:8080/health
+          curl --fail -H 'X-Forwarded-Proto: https' http://127.0.0.1:8080/accounts
+          test "$(docker exec accounts-ci id -u)" != 0
+      - name: Container logs
+        if: always()
+        run: docker logs accounts-ci || true

@@ -1,4 +1,4 @@
-# Supported framework versions; a resolved lock file is generated for CI.
+# Supported framework versions, exercised by PostgreSQL CI on Python 3.12.
 Flask>=3.1,<4
 Flask-Talisman>=1.1,<2
 Flask-Cors>=6,<7
