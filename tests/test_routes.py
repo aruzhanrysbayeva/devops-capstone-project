@@ -8,6 +8,7 @@ Test cases can be run with the following:
 import os
 import logging
 from unittest import TestCase
+from unittest.mock import patch
 from tests.factories import AccountFactory
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
@@ -168,10 +169,11 @@ class TestAccountService(TestCase):
     def test_update_invalid_account(self):
         """It should reject an incomplete update and retain persisted data"""
         account = self._create_accounts(1)[0]
+        original = account.serialize()
         response = self.client.put(f"{BASE_URL}/{account.id}", json={"name": "bad"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         db.session.rollback()
-        self.assertEqual(Account.find(account.id).name, account.name)
+        self.assertEqual(self.client.get(f"{BASE_URL}/{account.id}").get_json(), original)
 
     def test_update_wrong_media(self):
         """It should reject non-JSON updates"""
@@ -204,3 +206,30 @@ class TestAccountService(TestCase):
         location = response.headers["Location"]
         self.assertTrue(location.endswith(f"{BASE_URL}/{response.get_json()['id']}"))
         self.assertEqual(self.client.get(location).get_json(), response.get_json())
+
+    def test_create_optional_fields(self):
+        """It should supply today's date when optional inputs are omitted"""
+        from datetime import date
+        data = {"name": "Test Account", "email": "test@example.invalid", "address": "Test Street"}
+        response = self.client.post(BASE_URL, json=data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(response.get_json()["phone_number"])
+        self.assertEqual(response.get_json()["date_joined"], date.today().isoformat())
+
+    def test_json_with_charset(self):
+        """It should accept a JSON media type with a charset parameter"""
+        response = self.client.post(BASE_URL, json=AccountFactory().serialize(),
+                                    content_type="application/json; charset=utf-8")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_unexpected_failure_is_json(self):
+        """It should return the documented JSON error format on server failure"""
+        previous = app.config.get("PROPAGATE_EXCEPTIONS")
+        app.config["PROPAGATE_EXCEPTIONS"] = False
+        try:
+            with patch("service.routes.Account.all", side_effect=RuntimeError("test failure")):
+                response = self.client.get(BASE_URL)
+            self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+            self.assertEqual(response.get_json()["error"], "Internal Server Error")
+        finally:
+            app.config["PROPAGATE_EXCEPTIONS"] = previous
