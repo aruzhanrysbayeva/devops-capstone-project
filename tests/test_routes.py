@@ -8,6 +8,7 @@ Test cases can be run with the following:
 import os
 import logging
 from unittest import TestCase
+from unittest.mock import patch
 from tests.factories import AccountFactory
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
@@ -123,4 +124,112 @@ class TestAccountService(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
-    # ADD YOUR TEST CASES HERE ...
+    def test_read_account(self):
+        """It should read a persisted account and return all its fields"""
+        account = self._create_accounts(1)[0]
+        response = self.client.get(f"{BASE_URL}/{account.id}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.get_json(), account.serialize())
+
+    def test_read_missing_account(self):
+        """It should return a JSON 404 for an unknown account"""
+        response = self.client.get(f"{BASE_URL}/0")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.get_json()["status"], 404)
+
+    def test_list_accounts(self):
+        """It should list every persisted account"""
+        accounts = self._create_accounts(3)
+        response = self.client.get(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({a["id"] for a in response.get_json()}, {a.id for a in accounts})
+
+    def test_list_empty_accounts(self):
+        """It should return an empty collection with 200, never 404"""
+        response = self.client.get(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.get_json(), [])
+
+    def test_update_account(self):
+        """It should persist updates while retaining the account ID"""
+        account = self._create_accounts(1)[0]
+        data = account.serialize()
+        data["phone_number"] = "555-1111"
+        response = self.client.put(f"{BASE_URL}/{account.id}", json=data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.get_json(), data)
+        self.assertEqual(self.client.get(f"{BASE_URL}/{account.id}").get_json(), data)
+
+    def test_update_missing_account(self):
+        """It should not create an account while updating an unknown ID"""
+        response = self.client.put(f"{BASE_URL}/0", json=AccountFactory().serialize())
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Account.all(), [])
+
+    def test_update_invalid_account(self):
+        """It should reject an incomplete update and retain persisted data"""
+        account = self._create_accounts(1)[0]
+        original = account.serialize()
+        response = self.client.put(f"{BASE_URL}/{account.id}", json={"name": "bad"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        db.session.rollback()
+        self.assertEqual(self.client.get(f"{BASE_URL}/{account.id}").get_json(), original)
+
+    def test_update_wrong_media(self):
+        """It should reject non-JSON updates"""
+        account = self._create_accounts(1)[0]
+        response = self.client.put(f"{BASE_URL}/{account.id}", data="hello", content_type="text/plain")
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+    def test_delete_account(self):
+        """It should delete the account and return no response body"""
+        account = self._create_accounts(1)[0]
+        response = self.client.delete(f"{BASE_URL}/{account.id}")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.data, b"")
+        self.assertIsNone(Account.find(account.id))
+
+    def test_delete_missing_account(self):
+        """It should make deletion idempotent for an unknown account"""
+        response = self.client.delete(f"{BASE_URL}/0")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.data, b"")
+
+    def test_method_not_allowed(self):
+        """It should reject unsupported collection methods"""
+        response = self.client.delete(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_create_location_resolves_to_account(self):
+        """It should identify the newly created resource in Location"""
+        response = self.client.post(BASE_URL, json=AccountFactory().serialize())
+        location = response.headers["Location"]
+        self.assertTrue(location.endswith(f"{BASE_URL}/{response.get_json()['id']}"))
+        self.assertEqual(self.client.get(location).get_json(), response.get_json())
+
+    def test_create_optional_fields(self):
+        """It should supply today's date when optional inputs are omitted"""
+        from datetime import date
+        data = {"name": "Test Account", "email": "test@example.invalid", "address": "Test Street"}
+        response = self.client.post(BASE_URL, json=data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(response.get_json()["phone_number"])
+        self.assertEqual(response.get_json()["date_joined"], date.today().isoformat())
+
+    def test_json_with_charset(self):
+        """It should accept a JSON media type with a charset parameter"""
+        response = self.client.post(BASE_URL, json=AccountFactory().serialize(),
+                                    content_type="application/json; charset=utf-8")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_unexpected_failure_is_json(self):
+        """It should return the documented JSON error format on server failure"""
+        previous = app.config.get("PROPAGATE_EXCEPTIONS")
+        app.config["PROPAGATE_EXCEPTIONS"] = False
+        try:
+            with patch("service.routes.Account.all", side_effect=RuntimeError("test failure")):
+                response = self.client.get(BASE_URL)
+            self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+            self.assertEqual(response.get_json()["error"], "Internal Server Error")
+        finally:
+            app.config["PROPAGATE_EXCEPTIONS"] = previous
