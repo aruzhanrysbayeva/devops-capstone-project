@@ -13,6 +13,7 @@ from tests.factories import AccountFactory
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
 from service.routes import app
+from service import talisman
 
 DATABASE_URI = os.getenv(
     "DATABASE_URI", "postgresql://postgres:postgres@localhost:5432/postgres"
@@ -36,10 +37,13 @@ class TestAccountService(TestCase):
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
         app.logger.setLevel(logging.CRITICAL)
         init_db(app)
+        cls.original_force_https = talisman.force_https
+        talisman.force_https = False
 
     @classmethod
     def tearDownClass(cls):
         """Runs once before test suite"""
+        talisman.force_https = cls.original_force_https
 
     def setUp(self):
         """Runs before each test"""
@@ -101,6 +105,34 @@ class TestAccountService(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
         self.assertNotIn("Access-Control-Allow-Credentials", response.headers)
+
+    def test_https_redirect(self):
+        """It should enforce HTTPS when the production policy is enabled"""
+        with patch.object(talisman, "force_https", True):
+            response = self.client.get("/accounts")
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertEqual(response.headers["Location"], "https://localhost/accounts")
+
+    def test_cors_preflight(self):
+        """It should allow JSON updates in the public noncredentialed demo"""
+        response = self.client.options(
+            BASE_URL + "/1",
+            headers={"Origin": "https://demo.example.invalid",
+                     "Access-Control-Request-Method": "PUT",
+                     "Access-Control-Request-Headers": "Content-Type"},
+            environ_overrides=HTTPS_ENVIRON,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://demo.example.invalid")
+        self.assertIn("PUT", response.headers["Access-Control-Allow-Methods"])
+        self.assertIn("Content-Type", response.headers["Access-Control-Allow-Headers"])
+        self.assertNotIn("Access-Control-Allow-Credentials", response.headers)
+
+    def test_security_on_error(self):
+        """It should retain the security policy on missing resources"""
+        response = self.client.get(BASE_URL + "/0", environ_overrides=HTTPS_ENVIRON)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
 
     def test_health(self):
         """It should be healthy"""
