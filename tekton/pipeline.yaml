@@ -1,38 +1,92 @@
-#
-# This pipeline needs the following tasks from Tekton Catalog
-#   - git-clone
-#   - flake8
-#
----
+# Tekton Catalog dependencies: git-clone 0.9 and flake8 0.1.
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
-metadata:  
+metadata:
   name: cd-pipeline
 spec:
   workspaces:
     - name: pipeline-workspace
   params:
     - name: repo-url
+      type: string
+      description: Public Git repository containing the account service
     - name: branch
+      type: string
       default: main
+    - name: build-image
+      type: string
+      description: Fully qualified image tag to build and deploy
   tasks:
     - name: init
-      workspaces:
-        - name: source
-          workspace: pipeline-workspace          
       taskRef:
         name: cleanup
-
-    - name: clone
       workspaces:
-        - name: output
-          workspace: pipeline-workspace          
+        - name: source
+          workspace: pipeline-workspace
+    - name: clone
+      runAfter: [init]
       taskRef:
         name: git-clone
+      workspaces:
+        - name: output
+          workspace: pipeline-workspace
       params:
-      - name: url
-        value: $(params.repo-url)
-      - name: revision
-        value: $(params.branch)
-      runAfter:
-        - init
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.branch)
+    - name: lint
+      runAfter: [clone]
+      taskRef:
+        name: flake8
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      params:
+        - name: image
+          value: python:3.12-slim
+        - name: args
+          value:
+            - --count
+            - --max-complexity=10
+            - --max-line-length=127
+            - --statistics
+    - name: tests
+      runAfter: [clone]
+      taskRef:
+        name: nose
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      params:
+        - name: database_uri
+          value: sqlite:////tmp/accounts-test.sqlite
+        - name: args
+          value: -v --with-spec --spec-color --cover-min-percentage=95
+    - name: build
+      runAfter: [lint, tests]
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      params:
+        - name: IMAGE
+          value: $(params.build-image)
+    - name: deploy
+      runAfter: [build]
+      taskRef:
+        name: openshift-client
+        kind: ClusterTask
+      workspaces:
+        - name: manifest-dir
+          workspace: pipeline-workspace
+      params:
+        - name: SCRIPT
+          value: |
+            set -eu
+            sed -i 's|IMAGE_NAME_HERE|$(params.build-image)|g' deploy/deployment.yaml
+            oc apply -f deploy/
+            oc rollout status deployment/accounts --timeout=180s
+            oc get all -l app=accounts
