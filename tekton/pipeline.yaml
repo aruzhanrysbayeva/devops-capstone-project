@@ -47,8 +47,6 @@ spec:
           value: python:3.12-slim
         - name: args
           value:
-            - service
-            - tests
             - --count
             - --max-complexity=10
             - --max-line-length=127
