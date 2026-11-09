@@ -1,7 +1,18 @@
-# DevOps Capstone Template
+# DevOps Capstone Project — Account Service
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.9](https://img.shields.io/badge/Python-3.9-green.svg)](https://shields.io/)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-green.svg)](https://www.python.org/)
+[![CI Build](https://github.com/aruzhanrysbayeva/devops-capstone-project/actions/workflows/ci-build.yaml/badge.svg)](https://github.com/aruzhanrysbayeva/devops-capstone-project/actions/workflows/ci-build.yaml)
+
+A Flask REST API for creating, listing, reading, updating and deleting customer accounts. It uses SQLAlchemy with PostgreSQL, tests the CRUD contract, and runs lint and coverage checks in GitHub Actions. The CI coverage threshold is 95%.
+
+## Run and test
+
+Use Python 3.12 and install `requirements.txt` in a virtual environment. Set `DATABASE_URI` to your development database, initialize it with `flask db-create`, and run `flask run`. Run `nosetests --cover-min-percentage=95` for the test suite. Tests delete their database rows: use a dedicated test database, or set `DATABASE_URI=sqlite:///:memory:` for an isolated local run.
+
+The workflow runs against a dedicated PostgreSQL service. The five REST operations are `POST /accounts`, `GET /accounts`, `GET /accounts/{id}`, `PUT /accounts/{id}`, and `DELETE /accounts/{id}`. Creation returns a `Location` header; deletion is idempotent.
+
+## Original template documentation
 
 This repository contains the starter code for the project in [**IBM-CD0285EN-SkillsNetwork DevOps Capstone Project**](https://www.coursera.org/learn/devops-capstone-project?specialization=devops-and-software-engineering) which is part of the [**IBM DevOps and Software Engineering Professional Certificate**](https://www.coursera.org/professional-certificates/devops-and-software-engineering)
 
