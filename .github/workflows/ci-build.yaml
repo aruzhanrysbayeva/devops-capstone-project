@@ -60,7 +60,7 @@ jobs:
         run: |
           docker run -d --name accounts-ci -p 127.0.0.1:8080:8080 \
             -e DATABASE_URI=sqlite:////tmp/accounts-ci.sqlite accounts:ci
-          curl --fail --retry 20 --retry-connrefused --retry-delay 1 \
+          curl --fail --max-time 5 --retry 20 --retry-all-errors --retry-delay 1 \
             -H 'X-Forwarded-Proto: https' http://127.0.0.1:8080/health
           curl --fail -H 'X-Forwarded-Proto: https' http://127.0.0.1:8080/accounts
           test "$(docker exec accounts-ci id -u)" != 0
